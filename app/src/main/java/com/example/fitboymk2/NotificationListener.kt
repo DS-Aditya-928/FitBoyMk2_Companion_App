@@ -1,11 +1,16 @@
 package com.example.fitboymk2
 
+import android.annotation.SuppressLint
 import android.app.Notification
+import android.bluetooth.BluetoothGatt
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaMetadata
+import android.media.session.MediaController
 import android.media.session.MediaSession
 import android.media.session.MediaSessionManager
+import android.media.session.PlaybackState
 import android.os.Build
 import android.os.Parcelable
 import android.service.notification.NotificationListenerService
@@ -13,10 +18,121 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
+import java.util.UUID
 
 class NotificationListener : NotificationListenerService()
 {
     private var mediaManager : MediaSessionManager? = null
+    private val metadataCallback = object : MediaController.Callback()
+    {
+        val MUSICDEETS_UUID: UUID = UUID.fromString("5df4d2b0-a927-11ee-a506-0242ac120002")
+        var activeController: MediaController? = null
+        //var nlContext : Context? = null
+        var lastSent = ""
+        fun sendDeets(mc: MediaController?)
+        {
+            var album = ""
+            var trackName = ""
+            var artist = ""
+            var trackLength = 0L
+            var play = 0
+            var cPos = 0L
+
+            if(mc != null)
+            {
+                val metadata = mc.metadata
+
+                if(metadata != null)
+                {
+                    album = if(metadata.getString(MediaMetadata.METADATA_KEY_ALBUM) == null) " " else metadata.getString(
+                        MediaMetadata.METADATA_KEY_ALBUM)
+                    artist = if(metadata.getString(MediaMetadata.METADATA_KEY_ARTIST) == null) " " else metadata.getString(
+                        MediaMetadata.METADATA_KEY_ARTIST)
+                    trackName = if(metadata.getString(MediaMetadata.METADATA_KEY_TITLE) == null) " " else metadata.getString(
+                        MediaMetadata.METADATA_KEY_TITLE)
+                    trackLength = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)
+                    if(trackLength > 0)
+                    {
+                        trackLength /= 1000//convert to seconds.
+                    }
+                }
+
+                val pbS = mc.playbackState
+
+                if(pbS != null)
+                {
+                    cPos = pbS.position
+                    if(cPos > 0)
+                    {
+                        cPos /= 1000
+                    }
+                    play = -1 * (pbS.state == PlaybackState.STATE_PAUSED).compareTo(true)
+                }
+
+                //trackN = if(metadata.getLong(MediaMetadata.METADATA_KEY_TRACK_NUMBER) == null) " " else (metadata.getLong(MediaMetadata.METADATA_KEY_TRACK_NUMBER).toString())
+                //trackN = if(metadata.containsKey("com.google.android.music.mediasession.METADATA_KEY_QUEUE_POSITION")) metadata.getLong("com.google.android.music.mediasession.METADATA_KEY_QUEUE_POSITION").toString() else "0aa"
+                //totalT = if(metadata.getLong(MediaMetadata.METADATA_KEY_NUM_TRACKS) == null) " " else metadata.getLong(MediaMetadata.METADATA_KEY_NUM_TRACKS).toString()
+            }
+
+            var toSend = ""
+            if(trackName.isEmpty())
+            {
+                toSend = "KILL"
+            }
+            else
+            {
+                toSend = "<AD>$trackName<1>$artist<2>$album<3>$trackLength<4>$cPos<5>$play"
+            }
+
+            if(toSend != lastSent)
+            {
+                Log.i("TS", toSend)
+
+                val intent = Intent("com.fitboymk2.SEND_BLE_COMMAND").apply {
+                    putExtra("TOSEND", toSend)
+                    putExtra("uuid", MUSICDEETS_UUID.toString())
+                }
+
+                this@NotificationListener.sendBroadcast(intent)
+                lastSent = toSend
+            }
+        }
+
+        override fun onPlaybackStateChanged(state: PlaybackState?)
+        {
+            sendDeets(activeController)
+            //Log.i("PS", state.toString())
+            super.onPlaybackStateChanged(state)
+        }
+
+        @SuppressLint("MissingPermission", "WrongConstant")
+        override fun onMetadataChanged(metadata: MediaMetadata?)
+        {
+            sendDeets(activeController)
+
+            super.onMetadataChanged(metadata)
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onSessionDestroyed() {
+            Log.i("Sesh", "sesh destroyed")
+            //deregister this callback
+            if(this.activeController != null)
+            {
+                this.activeController!!.unregisterCallback(this)
+            }
+            //send message to watch to disable media control.
+            /*
+            if((deetsCharacteristic != null) and connected)
+            {
+                btGatt?.writeCharacteristic(deetsCharacteristic!!, "KILL".toByteArray(), BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+            }
+            */
+
+            super.onSessionDestroyed()
+        }
+    }
+
     private val keyListener = @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     object : MediaSessionManager.OnMediaKeyEventSessionChangedListener
     {
