@@ -2,7 +2,6 @@ package com.example.fitboymk2
 
 import android.annotation.SuppressLint
 import android.app.Notification
-import android.bluetooth.BluetoothGatt
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -74,14 +73,10 @@ class NotificationListener : NotificationListenerService()
                 //totalT = if(metadata.getLong(MediaMetadata.METADATA_KEY_NUM_TRACKS) == null) " " else metadata.getLong(MediaMetadata.METADATA_KEY_NUM_TRACKS).toString()
             }
 
-            var toSend = ""
-            if(trackName.isEmpty())
-            {
-                toSend = "KILL"
-            }
-            else
-            {
-                toSend = "<AD>$trackName<1>$artist<2>$album<3>$trackLength<4>$cPos<5>$play"
+            val toSend = if(trackName.isEmpty()) {
+                "KILL"
+            } else {
+                "<AD>$trackName<1>$artist<2>$album<3>$trackLength<4>$cPos<5>$play"
             }
 
             if(toSend != lastSent)
@@ -143,14 +138,15 @@ class NotificationListener : NotificationListenerService()
             {
                 return
             }
-            val packageManager = this@NotificationListener.packageManager
+            //val packageManager = this@NotificationListener.packageManager
+            /*
             val mediaAppName = packageManager?.getApplicationLabel(
                 packageManager.getApplicationInfo(
                     p0,
                     PackageManager.ApplicationInfoFlags.of(PackageManager.GET_META_DATA.toLong())
                 )
             ) as String
-
+            */
             //wait for 100ms to ensue that the list is populated.
             Thread.sleep(100)
 
