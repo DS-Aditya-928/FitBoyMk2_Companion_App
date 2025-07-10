@@ -2,6 +2,7 @@ package com.example.fitboymk2
 
 import android.annotation.SuppressLint
 import android.app.Notification
+import android.bluetooth.BluetoothGattCharacteristic
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -28,6 +29,7 @@ class NotificationListener : NotificationListenerService()
         var activeController: MediaController? = null
         //var nlContext : Context? = null
         var lastSent = ""
+        var lastSentTime = System.currentTimeMillis()
         fun sendDeets(mc: MediaController?)
         {
             var album = ""
@@ -79,7 +81,8 @@ class NotificationListener : NotificationListenerService()
                 "<AD>$trackName<1>$artist<2>$album<3>$trackLength<4>$cPos<5>$play"
             }
 
-            if(toSend != lastSent)
+            //Log.i("MDCB", "Attempted $toSend  $lastSent")
+            if((toSend != lastSent) || ((System.currentTimeMillis() - lastSentTime) > 200L))
             {
                 Log.i("TS", toSend)
 
@@ -90,6 +93,7 @@ class NotificationListener : NotificationListenerService()
 
                 this@NotificationListener.sendBroadcast(intent)
                 lastSent = toSend
+                lastSentTime = System.currentTimeMillis()
             }
         }
 
@@ -110,6 +114,7 @@ class NotificationListener : NotificationListenerService()
 
         @SuppressLint("MissingPermission")
         override fun onSessionDestroyed() {
+            super.onSessionDestroyed()
             Log.i("Sesh", "sesh destroyed")
             //deregister this callback
             if(this.activeController != null)
@@ -123,8 +128,12 @@ class NotificationListener : NotificationListenerService()
                 btGatt?.writeCharacteristic(deetsCharacteristic!!, "KILL".toByteArray(), BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
             }
             */
+            val intent = Intent("com.fitboymk2.SEND_BLE_COMMAND").apply {
+                putExtra("TOSEND", "KILL")
+                putExtra("uuid", MUSICDEETS_UUID.toString())
+            }
 
-            super.onSessionDestroyed()
+            this@NotificationListener.sendBroadcast(intent)
         }
     }
 
@@ -252,9 +261,30 @@ class NotificationListener : NotificationListenerService()
 
         val nId = sbn.key
 
-        sendMsg.filter { it.code <= 127 }
+        sendMsg = sendMsg.filter { it.code <= 127 }
         sendMsg += "<5>$nId"
 
         Log.i("SEND MSG", sendMsg)
+        val NOTBUF_UUID: UUID = UUID.fromString("05590c96-12bb-11ee-be56-0242ac120002")
+        val intent = Intent("com.fitboymk2.SEND_BLE_COMMAND").apply {
+            putExtra("TOSEND", sendMsg)
+            putExtra("uuid", NOTBUF_UUID.toString())
+        }
+
+        this@NotificationListener.sendBroadcast(intent)
+    }
+
+    @SuppressLint("MissingPermission")
+    override fun onNotificationRemoved(sbn: StatusBarNotification?)
+    {
+        super.onNotificationRemoved(sbn)
+        Log.i("SEND MSG DEL", sbn?.key!!)
+        val NOTDELBUF_UUID: UUID = UUID.fromString("19e04166-12bb-11ee-be56-0242ac120002")
+        val intent = Intent("com.fitboymk2.SEND_BLE_COMMAND").apply {
+            putExtra("TOSEND", sbn.key!!)
+            putExtra("uuid", NOTDELBUF_UUID.toString())
+        }
+
+        this@NotificationListener.sendBroadcast(intent)
     }
 }
