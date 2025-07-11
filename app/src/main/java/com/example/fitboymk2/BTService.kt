@@ -25,6 +25,8 @@ import android.view.KeyEvent
 import androidx.annotation.RequiresApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.yield
@@ -37,7 +39,7 @@ import java.util.UUID
 class BTService : Service() {
 
     private var btGatt: BluetoothGatt? = null
-    private val serviceScope = CoroutineScope(SupervisorJob())
+    private var serviceScope = CoroutineScope(SupervisorJob())
     private val receiver = object : BroadcastReceiver()
     {
         @RequiresApi(Build.VERSION_CODES.TIRAMISU)
@@ -50,6 +52,8 @@ class BTService : Service() {
                 //Log.i("DB", ((uuid?.isNotEmpty() == true).toString()))
                 if ((uuid?.isNotEmpty() == true) && (btGatt != null))
                 {
+                    //Log.i("TL", "TryLaunch")
+                    //serviceScope = CoroutineScope(SupervisorJob())
                     serviceScope.launch {
                         //Log.i("L", "Slaunch")
 
@@ -85,6 +89,11 @@ class BTService : Service() {
             {
                 //start post connect setup.
                 Log.i("BTStatus", "Connected")
+                if(initMutex.isLocked)
+                {
+                    initMutex.unlock()
+                }
+                serviceScope = CoroutineScope(SupervisorJob())
                 serviceScope.launch{
                     val SERVICE_UUID: UUID = UUID.fromString("1f55d926-12bb-11ee-be56-0242ac120002")
                     initMutex.lock()
@@ -150,14 +159,15 @@ class BTService : Service() {
                         while(initMutex.isLocked){yield()}
                         Log.i("Notify", "Set for notification deletion uuid")
                     }
-
-                    btGatt = gatt
                 }
+
+                btGatt = gatt
             }
 
             else
             {
                 Log.i("BTStatus", "Disconnected")
+                serviceScope.cancel()
                 btGatt = null
                 if(initMutex.isLocked)
                 {
