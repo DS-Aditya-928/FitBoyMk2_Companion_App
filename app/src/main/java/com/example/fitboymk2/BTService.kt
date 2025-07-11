@@ -219,6 +219,8 @@ class BTService : Service() {
             value: ByteArray
         ) {
             super.onCharacteristicChanged(gatt, characteristic, value)
+            Log.i("C Change", value.decodeToString())
+            Log.i("UUID ", characteristic.uuid.toString())
             if(characteristic.uuid == MUSICCONTROL_UUID)
             {
                 val aM = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -262,6 +264,16 @@ class BTService : Service() {
                     aM.dispatchMediaKeyEvent(upEvent)
                 }
             }
+
+            else if(characteristic.uuid == FBDEL_UUID)
+            {
+                Log.i("BCAST", "BCAST")
+                val intent = Intent("com.fitboymk2.DELETENOTIFICATION").apply {
+                    putExtra("CODE", value.decodeToString())
+                }
+
+                this@BTService.sendBroadcast(intent)
+            }
         }
     }
 
@@ -281,9 +293,19 @@ class BTService : Service() {
             .setContentText("ConnectionHandler")
             .build()
         startForeground(1, tDN)
-        registerReceiver(receiver, IntentFilter("com.fitboymk2.SEND_BLE_COMMAND"),
-            RECEIVER_EXPORTED
-        )
+        try {
+            registerReceiver(receiver, IntentFilter("com.fitboymk2.SEND_BLE_COMMAND"),
+                RECEIVER_EXPORTED
+            )
+        }
+
+        catch (_:Exception)
+        {
+            unregisterReceiver(receiver)
+            registerReceiver(receiver, IntentFilter("com.fitboymk2.SEND_BLE_COMMAND"),
+                RECEIVER_EXPORTED
+            )
+        }
     }
 
     @SuppressLint("MissingPermission")

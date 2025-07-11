@@ -3,8 +3,11 @@ package com.example.fitboymk2
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.bluetooth.BluetoothGattCharacteristic
+import android.content.BroadcastReceiver
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.MediaMetadata
 import android.media.session.MediaController
@@ -18,11 +21,29 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 class NotificationListener : NotificationListenerService()
 {
     private var mediaManager : MediaSessionManager? = null
+
+    private val receiver = object : BroadcastReceiver()
+    {
+        @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+        @SuppressLint("MissingPermission")
+        override fun onReceive(context: Context?, intent: Intent?)
+        {
+            if (intent?.action == "com.fitboymk2.DELETENOTIFICATION")
+            {
+                val code = intent.getStringExtra("CODE")
+
+                this@NotificationListener.cancelNotification(code)
+            }
+        }
+    }
+
+
     private val metadataCallback = object : MediaController.Callback()
     {
         val MUSICDEETS_UUID: UUID = UUID.fromString("5df4d2b0-a927-11ee-a506-0242ac120002")
@@ -188,12 +209,27 @@ class NotificationListener : NotificationListenerService()
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     override fun onListenerConnected()
     {
+        super.onListenerConnected()
         Log.i("Listener Status", "Listener Connected")
         ContextCompat.startForegroundService(this, Intent(this, BTService::class.java))
         mediaManager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
         mediaManager!!.removeOnMediaKeyEventSessionChangedListener (keyListener)
         mediaManager!!.addOnMediaKeyEventSessionChangedListener(this.mainExecutor, keyListener)
-        super.onListenerConnected()
+
+        try
+        {
+            registerReceiver(receiver, IntentFilter("com.fitboymk2.DELETENOTIFICATION"),
+                RECEIVER_EXPORTED
+            )
+        }
+
+        catch (_:Exception)
+        {
+            unregisterReceiver(receiver)
+            registerReceiver(receiver, IntentFilter("com.fitboymk2.DELETENOTIFICATION"),
+                RECEIVER_EXPORTED
+            )
+        }
     }
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
