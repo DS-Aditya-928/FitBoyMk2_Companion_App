@@ -1,0 +1,54 @@
+[versions]
+# Plugins
+agp = "8.2.0"  # Android Gradle Plugin version - Verify and update as needed
+kotlin = "1.9.22" # Kotlin version - Verify and update as needed
+
+# Dependencies
+androidxCoreKtx = "1.12.0"
+androidxAppcompat = "1.6.1"
+material = "1.11.0"
+androidxConstraintlayout = "2.1.4"
+androidxLifecycle = "2.7.0"
+androidxNavigation = "2.7.7"
+androidxMedia3 = "1.2.1" # Check for the specific media3 components you need if more than common
+
+# Testing
+junit = "4.13.2"
+androidxTestJunit = "1.1.5"
+androidxEspressoCore = "3.5.1"
+
+[libraries]
+# AndroidX Core
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "androidxCoreKtx" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "androidxAppcompat" }
+
+# Material Design
+material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+
+# Layout
+androidx-constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "androidxConstraintlayout" }
+
+# Lifecycle (LiveData & ViewModel)
+androidx-lifecycle-livedata-ktx = { group = "androidx.lifecycle", name = "lifecycle-livedata-ktx", version.ref = "androidxLifecycle" }
+androidx-lifecycle-viewmodel-ktx = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-ktx", version.ref = "androidxLifecycle" }
+
+# Navigation
+androidx-navigation-fragment-ktx = { group = "androidx.navigation", name = "navigation-fragment-ktx", version.ref = "androidxNavigation" }
+androidx-navigation-ui-ktx = { group = "androidx.navigation", name = "navigation-ui-ktx", version.ref = "androidxNavigation" }
+
+# Media3
+androidx-media3-common = { group = "androidx.media3", name = "media3-common", version.ref = "androidxMedia3" } # Assuming ktx means the common module. If you used a specific one like exoplayer, adjust this.
+
+# Testing
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestJunit" } # Corrected group for androidx.test.ext:junit
+androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "androidxEspressoCore" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+jetbrains-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+
+[bundles]
+# You can group common dependencies here if you wish, for example:
+androidx-lifecycle = ["androidx-lifecycle-livedata-ktx", "androidx-lifecycle-viewmodel-ktx"]
+androidx-navigation = ["androidx-navigation-fragment-ktx", "androidx-navigation-ui-ktx"]
