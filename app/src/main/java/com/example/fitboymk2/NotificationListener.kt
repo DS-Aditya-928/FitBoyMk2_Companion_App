@@ -23,6 +23,7 @@ import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
 import java.util.UUID
+import kotlin.math.ceil
 
 class NotificationListener : NotificationListenerService()
 {
@@ -263,8 +264,17 @@ class NotificationListener : NotificationListenerService()
                 extras.getParcelableArray("android.messages") as Array<Parcelable>
             val messages = Notification.MessagingStyle.Message.getMessagesFromBundleArray(pArray)
 
+            var totalLines = 0
+            val maxLines = 6
             for (messageI in messages) {
-                sendMsg += messageI.senderPerson?.name.toString() + ":" + messageI.text.toString() + "\n"
+                val msg = messageI.senderPerson?.name.toString() + ":" + messageI.text.toString()
+                val numLines = ceil(msg.length/21.0).toInt()
+
+                if((numLines + 1 <= maxLines) || (totalLines == 0))
+                {
+                    totalLines += numLines
+                    sendMsg += msg + "\n"
+                }
             }
         }
 
@@ -286,9 +296,9 @@ class NotificationListener : NotificationListenerService()
                 formattedText = text
             }
 
-            if(formattedText.length > 128)
+            if(formattedText.length > 123)
             {
-                formattedText = formattedText.subSequence(0, 125).toString()
+                formattedText = formattedText.subSequence(0, 123).toString()
                 formattedText += "..."
             }
 
