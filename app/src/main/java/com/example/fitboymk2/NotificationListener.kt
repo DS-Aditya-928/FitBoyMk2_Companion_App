@@ -107,16 +107,33 @@ class NotificationListener : NotificationListenerService()
             if((toSend != lastSent) || ((System.currentTimeMillis() - lastSentTime) > 200L))
             {
                 Log.i("TS", toSend)
-
+                val MUSIC_SERVICE_UUID_VAL = UUID.fromString("019c9698-ccae-7bd0-9976-3017ee420aba")
                 val intent = Intent("com.fitboymk2.SEND_BLE_COMMAND").apply {
                     putExtra("TOSEND", toSend)
-                    putExtra("uuid", MUSICDEETS_UUID.toString())
+                    putExtra("serviceUUID", MUSIC_SERVICE_UUID_VAL.toString())
+                    putExtra("characteristicUUID", MUSICDEETS_UUID.toString())
                 }
 
                 this@NotificationListener.sendBroadcast(intent)
                 lastSent = toSend
                 lastSentTime = System.currentTimeMillis()
             }
+        }
+
+        override fun onQueueChanged(queue: List<MediaSession.QueueItem?>?)
+        {
+            Log.i("Queue Change", "precheck")
+            if (queue != null)
+            {
+                Log.i("Queue Change", "Not null")
+                for (i in queue)
+                {
+                    Log.i("Item", i.toString())
+                    Log.i("Title", (i?.description?.title ?: "") as String)
+                    Log.i("subtitle", (i?.description?.subtitle ?: "") as String)
+                }
+            }
+            super.onQueueChanged(queue)
         }
 
         override fun onPlaybackStateChanged(state: PlaybackState?)
@@ -150,9 +167,11 @@ class NotificationListener : NotificationListenerService()
                 btGatt?.writeCharacteristic(deetsCharacteristic!!, "KILL".toByteArray(), BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
             }
             */
+            val MUSIC_SERVICE_UUID_VAL = UUID.fromString("019c9698-ccae-7bd0-9976-3017ee420aba")
             val intent = Intent("com.fitboymk2.SEND_BLE_COMMAND").apply {
                 putExtra("TOSEND", "KILL")
-                putExtra("uuid", MUSICDEETS_UUID.toString())
+                putExtra("serviceUUID", MUSIC_SERVICE_UUID_VAL.toString())
+                putExtra("characteristicUUID", MUSICDEETS_UUID.toString())
             }
 
             this@NotificationListener.sendBroadcast(intent)
@@ -311,10 +330,13 @@ class NotificationListener : NotificationListenerService()
         sendMsg += "<5>$nId"
 
         Log.i("SEND MSG", sendMsg)
-        val NOTBUF_UUID: UUID = UUID.fromString("05590c96-12bb-11ee-be56-0242ac120002")
+        val NOTIFICATION_SERVICE_UUID: UUID = UUID.fromString("d2fa52f9-4c5d-4a05-a010-c26a1b99f5e6")
+        val NOTCHAR_UUID: UUID = UUID.fromString("05590c96-12bb-11ee-be56-0242ac120002")
+
         val intent = Intent("com.fitboymk2.SEND_BLE_COMMAND").apply {
             putExtra("TOSEND", sendMsg)
-            putExtra("uuid", NOTBUF_UUID.toString())
+            putExtra("serviceUUID", NOTIFICATION_SERVICE_UUID.toString())
+            putExtra("characteristicUUID", NOTCHAR_UUID.toString())
         }
 
         this@NotificationListener.sendBroadcast(intent)
@@ -325,10 +347,12 @@ class NotificationListener : NotificationListenerService()
     {
         super.onNotificationRemoved(sbn)
         Log.i("SEND MSG DEL", sbn?.key!!)
+        val NOTIFICATION_SERVICE_UUID: UUID = UUID.fromString("d2fa52f9-4c5d-4a05-a010-c26a1b99f5e6")
         val NOTDELBUF_UUID: UUID = UUID.fromString("19e04166-12bb-11ee-be56-0242ac120002")
         val intent = Intent("com.fitboymk2.SEND_BLE_COMMAND").apply {
             putExtra("TOSEND", sbn.key!!)
-            putExtra("uuid", NOTDELBUF_UUID.toString())
+            putExtra("serviceUUID", NOTIFICATION_SERVICE_UUID.toString())
+            putExtra("characteristicUUID", NOTDELBUF_UUID.toString())
         }
 
         this@NotificationListener.sendBroadcast(intent)
