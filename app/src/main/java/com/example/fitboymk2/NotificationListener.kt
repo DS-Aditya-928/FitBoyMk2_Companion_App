@@ -1,5 +1,6 @@
 package com.example.fitboymk2
 
+import android.R
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.bluetooth.BluetoothGattCharacteristic
@@ -24,9 +25,50 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
 import java.util.UUID
 import kotlin.math.ceil
-
 class NotificationListener : NotificationListenerService()
 {
+    class StringIdManager
+    {
+        private val stringToId = mutableMapOf<String, Int>()
+        private val idToString = mutableMapOf<Int, String>()
+        private val availableIds = ArrayDeque<Int>((1..255).toList())
+
+        fun getId(input: String): Int?
+        {
+            stringToId[input]?.let { return it }
+
+           //if new we create
+            val nextId = availableIds.removeFirstOrNull() ?: return null
+
+            stringToId[input] = nextId
+            idToString[nextId] = input
+            return nextId
+        }
+
+        fun releaseString(input: String): Int?
+        {
+            val id = stringToId.remove(input)
+            if (id != null)
+            {
+                idToString.remove(id)
+                availableIds.add(id)
+            }
+            return(id)
+        }
+
+        fun releaseID(input: Int): String?
+        {
+            val string = idToString.remove(input)
+            if(string != null)
+            {
+                stringToId.remove(string)
+                availableIds.add(input)
+            }
+            return(string)
+        }
+    }
+
+    var stringIdManager = StringIdManager();
     private var mediaManager : MediaSessionManager? = null
 
     private val receiver = object : BroadcastReceiver()
@@ -37,9 +79,12 @@ class NotificationListener : NotificationListenerService()
         {
             if (intent?.action == "com.fitboymk2.DELETENOTIFICATION")
             {
-                val code = intent.getStringExtra("CODE")
-
-                this@NotificationListener.cancelNotification(code)
+                val codeString: String? = intent.getStringExtra("CODE")
+                if(codeString != null)
+                {
+                    val notificationId = stringIdManager.releaseID(codeString[0].code)
+                    this@NotificationListener.cancelNotification(notificationId)
+                }
             }
         }
     }
@@ -106,7 +151,7 @@ class NotificationListener : NotificationListenerService()
             //Log.i("MDCB", "Attempted $toSend  $lastSent")
             if((toSend != lastSent) || ((System.currentTimeMillis() - lastSentTime) > 200L))
             {
-                Log.i("TS", toSend)
+                Log.i("metadataCallback, sendDeets", "Data to send: $toSend")
                 val MUSIC_SERVICE_UUID_VAL = UUID.fromString("019c9698-ccae-7bd0-9976-3017ee420aba")
                 val intent = Intent("com.fitboymk2.SEND_BLE_COMMAND").apply {
                     putExtra("TOSEND", toSend)
@@ -122,15 +167,15 @@ class NotificationListener : NotificationListenerService()
 
         override fun onQueueChanged(queue: List<MediaSession.QueueItem?>?)
         {
-            Log.i("Queue Change", "precheck")
+            Log.i("metadataCallback, onQueueChange", "callback triggered")
             if (queue != null)
             {
-                Log.i("Queue Change", "Not null")
+                Log.i("metadataCallback, onQueueChange", "${queue.size} items")
                 for (i in queue)
                 {
-                    Log.i("Item", i.toString())
-                    Log.i("Title", (i?.description?.title ?: "") as String)
-                    Log.i("subtitle", (i?.description?.subtitle ?: "") as String)
+                    Log.i("metadataCallback, onQueueChange", "Item: ${i.toString()}")
+                    //Log.i("Title", (i?.description?.title ?: "") as String)
+                    //Log.i("subtitle", (i?.description?.subtitle ?: "") as String)
                 }
             }
             super.onQueueChanged(queue)
@@ -154,19 +199,14 @@ class NotificationListener : NotificationListenerService()
         @SuppressLint("MissingPermission")
         override fun onSessionDestroyed() {
             super.onSessionDestroyed()
-            Log.i("Sesh", "sesh destroyed")
+            Log.i("metadataCallback, onSessionDestroyed", "Active session ${this.activeController} destroyed")
             //deregister this callback
             if(this.activeController != null)
             {
                 this.activeController!!.unregisterCallback(this)
             }
+
             //send message to watch to disable media control.
-            /*
-            if((deetsCharacteristic != null) and connected)
-            {
-                btGatt?.writeCharacteristic(deetsCharacteristic!!, "KILL".toByteArray(), BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
-            }
-            */
             val MUSIC_SERVICE_UUID_VAL = UUID.fromString("019c9698-ccae-7bd0-9976-3017ee420aba")
             val intent = Intent("com.fitboymk2.SEND_BLE_COMMAND").apply {
                 putExtra("TOSEND", "KILL")
@@ -183,34 +223,24 @@ class NotificationListener : NotificationListenerService()
     {
         override fun onMediaKeyEventSessionChanged(p0: String, p1: MediaSession.Token?)
         {
-            Log.i("MediaKey new listener", "$p0 " + p1.toString())
-            if(p0.isEmpty() || (p1 == null))
-            {
+            Log.i("keyListener, onMediaKeyEventSessionChanged", "New listener: $p0 $p1")
+            if(p0.isEmpty() || (p1 == null)) {
                 return
             }
-            //val packageManager = this@NotificationListener.packageManager
-            /*
-            val mediaAppName = packageManager?.getApplicationLabel(
-                packageManager.getApplicationInfo(
-                    p0,
-                    PackageManager.ApplicationInfoFlags.of(PackageManager.GET_META_DATA.toLong())
-                )
-            ) as String
-            */
-            //wait for 100ms to ensue that the list is populated.
-            Thread.sleep(100)
+            //wait for 50ms to ensue that the list is populated.
+            Thread.sleep(50)
 
             val mcList = mediaManager?.getActiveSessions(ComponentName("com.example.fitboymk2", ".NotificationListener"))
 
             if(mcList != null)
             {
-                Log.i("MediaKey", "Searching for new listener's session")
+                Log.i("keyListener, onMediaKeyEventSessionChanged", "Searching for $p0 session. token: $p1")
                 for(i in mcList)
                 {
-                    Log.i("S", i.packageName)
+                    Log.i("keyListener, onMediaKeyEventSessionChanged", "Possible match: ${i.packageName}")
                     if(i.sessionToken == p1)
                     {
-                        Log.i("KC", "Found media controller")
+                        Log.i("keyListener, onMediaKeyEventSessionChanged", "Found media controller ${i.packageName} with token ${i.sessionToken}")
                         if(metadataCallback.activeController != null)
                         {
                             metadataCallback.activeController!!.unregisterCallback(metadataCallback)
@@ -230,7 +260,7 @@ class NotificationListener : NotificationListenerService()
     override fun onListenerConnected()
     {
         super.onListenerConnected()
-        Log.i("Listener Status", "Listener Connected")
+        Log.i("Notification Listener, onListenerConnected", "Listener Connected")
         ContextCompat.startForegroundService(this, Intent(this, BTService::class.java))
         mediaManager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
         mediaManager!!.removeOnMediaKeyEventSessionChangedListener (keyListener)
@@ -264,21 +294,22 @@ class NotificationListener : NotificationListenerService()
         //bundle2string(extras)?.let { Log.i("NL", it) }
 
         val packageManager = applicationContext.packageManager
-        val appName = packageManager.getApplicationLabel(
+        var appName = packageManager.getApplicationLabel(
             packageManager.getApplicationInfo(
                 sbn.packageName,
                 PackageManager.ApplicationInfoFlags.of(PackageManager.GET_META_DATA.toLong())
             )
         ) as String
 
-        val nTitle = extras.getString("android.title")
-        val nSubText = extras.getString("android.subText")
+        appName = appName.replace("\u0000", " ")
+        val nTitle = extras.getString("android.title")?.replace("\u0000", " ")
+        val nSubText = extras.getString("android.subText")?.replace("\u0000", " ")
 
-        var sendMsg = "<0>$appName<1>$nTitle<2>$nSubText<3>"
+        var sendMsg = "$appName\u0000$nTitle\u0000$nSubText\u0000"
 
         if(extras.containsKey("android.messages"))
         {
-            sendMsg += "T<4>\n"
+            sendMsg += "T\u0000"
             val pArray: Array<Parcelable> =
                 extras.getParcelableArray("android.messages") as Array<Parcelable>
             val messages = Notification.MessagingStyle.Message.getMessagesFromBundleArray(pArray)
@@ -292,14 +323,14 @@ class NotificationListener : NotificationListenerService()
                 if((numLines + 1 <= maxLines) || (totalLines == 0))
                 {
                     totalLines += numLines
-                    sendMsg += msg + "\n"
+                    sendMsg += (msg.replace("\u0000", " ") + "\n")
                 }
             }
         }
 
         else
         {
-            sendMsg += "D<4>"
+            sendMsg += "D\u0000"
 
             val bigText = extras.getCharSequence("android.bigText").toString()
             val text = extras.getCharSequence("android.text").toString()
@@ -315,21 +346,22 @@ class NotificationListener : NotificationListenerService()
                 formattedText = text
             }
 
-            if(formattedText.length > 123)
-            {
-                formattedText = formattedText.subSequence(0, 123).toString()
-                formattedText += "..."
-            }
-
-            sendMsg += formattedText
+            sendMsg += formattedText.replace("\u0000", " ")
         }
 
-        val nId = sbn.key
+        val nId = stringIdManager.getId(sbn.key) //will be 1 to 255 inclusive.
 
-        sendMsg = sendMsg.filter { it.code <= 127 }
-        sendMsg += "<5>$nId"
+        if(nId == null)
+        {
+            Log.i("NotificationListener, onNotificationPosted", "No more space. Returning early.")
+            return
+        }
 
-        Log.i("SEND MSG", sendMsg)
+        val idByte : Char = nId.toChar()
+        sendMsg = sendMsg.filter { it.code <= 255 }
+        sendMsg += "\u0000$idByte\u0000"
+
+        Log.i("NotificationListener, onNotificationPosted", "Final data packet: $sendMsg; ID is $nId")
         val NOTIFICATION_SERVICE_UUID: UUID = UUID.fromString("d2fa52f9-4c5d-4a05-a010-c26a1b99f5e6")
         val NOTCHAR_UUID: UUID = UUID.fromString("05590c96-12bb-11ee-be56-0242ac120002")
 
@@ -346,11 +378,22 @@ class NotificationListener : NotificationListenerService()
     override fun onNotificationRemoved(sbn: StatusBarNotification?)
     {
         super.onNotificationRemoved(sbn)
-        Log.i("SEND MSG DEL", sbn?.key!!)
+        if(sbn?.key == null)
+        {
+            return
+        }
+
+        val internalId = stringIdManager.releaseString(sbn.key!!)
+        Log.i("NotificationListener, onNotificationRemoved", "Deleted notification ID: ${sbn?.key!!}, internal ID: $internalId")
         val NOTIFICATION_SERVICE_UUID: UUID = UUID.fromString("d2fa52f9-4c5d-4a05-a010-c26a1b99f5e6")
         val NOTDELBUF_UUID: UUID = UUID.fromString("19e04166-12bb-11ee-be56-0242ac120002")
+
+        if(internalId == null)
+        {
+            return
+        }
         val intent = Intent("com.fitboymk2.SEND_BLE_COMMAND").apply {
-            putExtra("TOSEND", sbn.key!!)
+            putExtra("TOSEND", internalId.toChar().toString())
             putExtra("serviceUUID", NOTIFICATION_SERVICE_UUID.toString())
             putExtra("characteristicUUID", NOTDELBUF_UUID.toString())
         }

@@ -10,7 +10,6 @@ import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
-import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
@@ -26,7 +25,6 @@ import androidx.annotation.RequiresApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.yield
@@ -55,14 +53,12 @@ class BTService : Service() {
                 val serviceUUID = intent.getStringExtra("serviceUUID")
                 val characteristicUUID = intent.getStringExtra("characteristicUUID")
 
-                //Log.i("Intent", "Intent Recieved")
-                //Log.i("DB", ((uuid?.isNotEmpty() == true).toString()))
                 if ((serviceUUID?.isNotEmpty() == true) && (characteristicUUID?.isNotEmpty() == true) && (btGatt != null))
                 {
-                    Log.i("TL", "TryLaunch")
+                    Log.i("BTService, Tx Intent", "Attempting servicescope.launch")
                     //serviceScope = CoroutineScope(SupervisorJob())
                     serviceScope.launch {
-                        Log.i("L", "Slaunch")
+                        Log.i("BTService, Tx Intent", "servicescope.launch OK")
                         sendMutex.lock()
                         val stringBytes = data?.toByteArray(StandardCharsets.UTF_8)
                         if(stringBytes != null) {
@@ -81,7 +77,7 @@ class BTService : Service() {
                                     val end = min(i + 60, buffer.array().size)
                                     val chunk = buffer.array().copyOfRange(i, end)
                                     callback.initMutex.lock()
-                                    Log.i("Sending $i", chunk.contentToString())
+                                    Log.i("BTService, Tx Intent", "Sending packet at $i. Content: ${chunk.contentToString()}")
                                     btGatt?.writeCharacteristic(
                                         writeChar,
                                         chunk,
@@ -112,7 +108,7 @@ class BTService : Service() {
             if(newState == BluetoothProfile.STATE_CONNECTED && gatt != null)
             {
                 //start post connect setup.
-                Log.i("BTStatus", "Connected")
+                Log.i("BTGattCallback, onConnectionStateChange", "Watch connected")
                 if(initMutex.isLocked)
                 {
                     initMutex.unlock()
@@ -138,7 +134,7 @@ class BTService : Service() {
                         //gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
                     }
                     while(initMutex.isLocked){yield()}
-                    Log.i("BTStatus", "Setup complete.")
+                    Log.i("BTGattCallback, onConnectionStateChange", "Base setup complete. Doing service discovery...")
 
                     val timeService : UUID = UUID.fromString("1f55d926-12bb-11ee-be56-0242ac120007")
                     val timeCharacteristic = gatt.getService(timeService)?.getCharacteristic(TIME_UUID)
@@ -154,7 +150,7 @@ class BTService : Service() {
 
                     if (timeCharacteristic != null)
                     {
-                        Log.i("Found timeservice", "writing")
+                        Log.i("BTGattCallback, onConnectionStateChange", "Found time service, writing time")
                         var unixTime = (Calendar.getInstance().timeInMillis/1000)
                         val tz = TimeZone.getDefault() as TimeZone
                         unixTime += (tz.getOffset(Calendar.getInstance().timeInMillis)/1000)
@@ -166,7 +162,7 @@ class BTService : Service() {
 
                         gatt.writeCharacteristic(timeCharacteristic,  x.array().reversedArray(), BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
                         while(initMutex.isLocked){yield()}
-                        Log.i("Time", "Set $utString " + unixTime + " " + tz.getOffset(unixTime)/1000)
+                        Log.i("BTGattCallback, onConnectionStateChange", "Time set $utString " + unixTime + " " + tz.getOffset(unixTime)/1000)
                     }
 
                     //also set up music controls and notDels callback notify flags
@@ -179,7 +175,7 @@ class BTService : Service() {
                         initMutex.lock()
                         btGatt?.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
                         while(initMutex.isLocked){yield()}
-                        Log.i("Notify", "Set for music control uuid")
+                        Log.i("BTGattCallback, onConnectionStateChange", "Notify properties set for music control uuid")
                     }
 
                     val notDelCharacteristic = notificationService?.getCharacteristic(FBDEL_UUID)
@@ -192,14 +188,14 @@ class BTService : Service() {
                         initMutex.lock()
                         btGatt?.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
                         while(initMutex.isLocked){yield()}
-                        Log.i("Notify", "Set for notification deletion uuid")
+                        Log.i("BTGattCallback, onConnectionStateChange", "Notify properties set for notification deletion uuid")
                     }
                 }
             }
 
             else
             {
-                Log.i("BTStatus", "Disconnected")
+                Log.i("BTGattCallback, onConnectionStateChange", "Watch disconnected")
                 serviceScope.cancel()
                 btGatt = null
                 if(initMutex.isLocked)
@@ -213,7 +209,7 @@ class BTService : Service() {
         override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int)
         {
             super.onMtuChanged(gatt, mtu, status)
-            Log.i("BTINIT", "MTU CHANGED")
+            Log.i("BTGattCallback, onMtuChanged", "MTU changed")
             initMutex.unlock()
         }
 
@@ -222,7 +218,7 @@ class BTService : Service() {
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int)
         {
             super.onServicesDiscovered(gatt, status)
-            Log.i("BTINIT", "Services discovered")
+            Log.i("BTGattCallback, onServicesDiscovered", "Services discovered")
             initMutex.unlock()
         }
 
@@ -232,7 +228,7 @@ class BTService : Service() {
             status: Int
         ) {
             super.onDescriptorWrite(gatt, descriptor, status)
-            Log.i("BITINIT", "Descriptor Written")
+            Log.i("BTGattCallback, onDescriptorWrite", "Descriptor written")
             initMutex.unlock()
         }
 
@@ -242,7 +238,7 @@ class BTService : Service() {
             status: Int
         ) {
             super.onCharacteristicWrite(gatt, characteristic, status)
-            Log.i("CW ", "CW Done")
+            Log.i("BTGattCallback, onCharacteristicWrite", "CW Done")
             initMutex.unlock()
         }
 
@@ -254,12 +250,12 @@ class BTService : Service() {
             value: ByteArray
         ) {
             super.onCharacteristicChanged(gatt, characteristic, value)
-            Log.i("C Change", value.decodeToString())
-            Log.i("UUID ", characteristic.uuid.toString())
+            Log.i("BTGattCallback, onCharacteristicChange", "Value: ${value.decodeToString()}")
+            Log.i("BTGattCallback, onCharacteristicChange", "UUID: ${characteristic.uuid}")
 
             if(characteristic.uuid == MUSICCONTROL_UUID)
             {
-                Log.i("Receiving Packet", value.contentToString())
+                Log.i("Music Control, BTGattCallback, onCharacteristicChange", "Music control, ${value.contentToString()}")
                 conStr.write(value)
 
                 if(value.last().toInt() == 0)
@@ -267,17 +263,17 @@ class BTService : Service() {
                     val aM = getSystemService(Context.AUDIO_SERVICE) as AudioManager
                     val v = String(conStr.toByteArray().dropLast(1).toByteArray())
                     conStr.reset()
-                    Log.i("Final cmd", v)
+                    Log.i("Music Control, BTGattCallback, onCharacteristicChange", "Final String: $v")
                     if(v.compareTo("1") == 0)
                     {
-                        val eventtime = android.os.SystemClock.uptimeMillis()
+                        val eventTime = android.os.SystemClock.uptimeMillis()
 
                         val downEvent =
-                            KeyEvent(eventtime, eventtime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, 0)
+                            KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, 0)
                         aM.dispatchMediaKeyEvent(downEvent)
 
                         val upEvent =
-                            KeyEvent(eventtime, eventtime, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, 0)
+                            KeyEvent(eventTime, eventTime, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, 0)
                         aM.dispatchMediaKeyEvent(upEvent)
                     }
 
@@ -311,15 +307,16 @@ class BTService : Service() {
 
             else if(characteristic.uuid == FBDEL_UUID)
             {
-                Log.i("Receiving Packet", value.contentToString())
+                Log.i("Notification Delete, BTGattCallback, onCharacteristicChange", value.contentToString())
                 delStr.write(value)
                 if(value.last().toInt() == 0)
                 {
-                    Log.i("Final ID", String(delStr.toByteArray().dropLast(1).toByteArray()))
-                    Log.i("Final ID", delStr.toByteArray().contentToString())
+                    val idStr = String(delStr.toByteArray().dropLast(1).toByteArray())
+                    Log.i("Notification Delete, BTGattCallback, onCharacteristicChange", "Final ID: $idStr")
+                    Log.i("Notification Delete, BTGattCallback, onCharacteristicChange", "Creating intent.")
 
                     val intent = Intent("com.fitboymk2.DELETENOTIFICATION").apply {
-                        putExtra("CODE", String(delStr.toByteArray().dropLast(1).toByteArray()))
+                        putExtra("CODE", idStr)
                     }
 
                     this@BTService.sendBroadcast(intent)
