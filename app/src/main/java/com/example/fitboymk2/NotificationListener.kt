@@ -332,17 +332,27 @@ class NotificationListener : NotificationListenerService()
         {
             sendMsg += "D\u0000"
 
-            val bigText = extras.getCharSequence("android.bigText").toString()
+            var bigText = extras.getCharSequence("android.bigText").toString()
             val text = extras.getCharSequence("android.text").toString()
             var formattedText = ""
 
             if(bigText.isNotEmpty())
             {
+                if(bigText.length >= 255)
+                {
+                    bigText = bigText.substring(0, 255)
+                }
+
                 formattedText = bigText
             }
 
             else if(text.isNotEmpty())
             {
+                if(text.length >= 255)
+                {
+                    text.substring(0, 255)
+                }
+
                 formattedText = text
             }
 
