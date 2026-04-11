@@ -97,8 +97,14 @@ class BTService : Service() {
     private val callback = object : BluetoothGattCallback()
     {
         var initMutex = Mutex()
+        var phyMutex = Mutex()
         val MUSICCONTROL_UUID : UUID = UUID.fromString("6ddb28be-a927-11ee-a506-0242ac120002")
         val FBDEL_UUID: UUID = UUID.fromString("c533a7ba-272e-11ee-be56-0242ac120002")
+
+        override fun onPhyUpdate(gatt: BluetoothGatt?, txPhy: Int, rxPhy: Int, status: Int) {
+            super.onPhyUpdate(gatt, txPhy, rxPhy, status)
+            phyMutex.unlock()
+        }
 
         @RequiresApi(Build.VERSION_CODES.TIRAMISU)
         @SuppressLint("MissingPermission")
@@ -119,21 +125,14 @@ class BTService : Service() {
                 serviceScope = CoroutineScope(SupervisorJob())
                 serviceScope.launch{
                     initMutex.lock()
-                    gatt.requestMtu(512)
+                    phyMutex.lock()
+                    while(phyMutex.isLocked){yield()}
+
+                    gatt.requestMtu(64)
                     initMutex.lock()
                     gatt.discoverServices()
-                    initMutex.lock()//wait for service discovery to finish
-                    //gattService = gatt.getService(SERVICE_UUID)
-                    val fbdC  = null//gatt.getService()?.getCharacteristic(FBDEL_UUID)
-                    initMutex.unlock()
-                    if(fbdC != null)
-                    {
-                        gatt.setCharacteristicNotification(fbdC, true)
-                        //val descriptor: BluetoothGattDescriptor = fbdC.getDescriptor(CHARACTERISTIC_UPDATE_NOTIFICATION_DESCRIPTOR_UUID)
-                        initMutex.lock()
-                        //gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-                    }
                     while(initMutex.isLocked){yield()}
+
                     Log.i("BTGattCallback, onConnectionStateChange", "Base setup complete. Doing service discovery...")
 
                     val timeService : UUID = UUID.fromString("1f55d926-12bb-11ee-be56-0242ac120007")
