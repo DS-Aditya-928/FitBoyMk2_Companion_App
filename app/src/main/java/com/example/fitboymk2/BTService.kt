@@ -23,11 +23,12 @@ import android.util.Log
 import android.view.KeyEvent
 import androidx.annotation.RequiresApi
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.yield
+import kotlinx.coroutines.withTimeout
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
@@ -38,57 +39,116 @@ import kotlin.math.min
 
 //var timeCharacteristic : BluetoothGattCharacteristic? = null
 
-class BTService : Service() {
-
-    val sendMutex = Mutex()
+class BTService : Service()
+{
     private var btGatt: BluetoothGatt? = null
-    private var serviceScope = CoroutineScope(SupervisorJob())
+
+    // Use a single SupervisorJob for the whole service life
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var setupJob: Job? = null
+    private var txJob: Job? = null
+    private var gattEventChannel = Channel<GattEvent>(Channel.UNLIMITED)
+    private var commandChannel = Channel<BleWriteCommand>(Channel.BUFFERED)
+
+    sealed class GattEvent
+    {
+        object MtuChanged : GattEvent()
+        object ServicesDiscovered : GattEvent()
+        object CharacteristicWritten : GattEvent()
+        object DescriptorWritten : GattEvent()
+        object PhyUpdated : GattEvent()
+        data class Disconnected(val status: Int) : GattEvent()
+    }
+
+    private suspend inline fun <reified T : GattEvent> waitForEvent(timeout: Long = 5000)
+    {
+        withTimeout(timeout) {
+            for (event in gattEventChannel)
+            {
+                if (event is T) return@withTimeout
+                if (event is GattEvent.Disconnected) {
+                    throw Exception("Disconnected")
+                }
+            }
+        }
+    }
+
+    data class BleWriteCommand(
+        val serviceUUID: UUID,
+        val characteristicUUID: UUID,
+        val data: String
+    )
     private val receiver = object : BroadcastReceiver()
     {
         @RequiresApi(Build.VERSION_CODES.TIRAMISU)
         @SuppressLint("MissingPermission")
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == "com.fitboymk2.SEND_BLE_COMMAND") {
-                val data = intent.getStringExtra("TOSEND")
-                val serviceUUID = intent.getStringExtra("serviceUUID")
-                val characteristicUUID = intent.getStringExtra("characteristicUUID")
+        override fun onReceive(context: Context?, intent: Intent?)
+        {
+            if (intent?.action == "com.fitboymk2.SEND_BLE_COMMAND")
+            {
+                Log.i("onReceive", "intent received")
+                val data = intent.getStringExtra("TOSEND") ?:""
+                val serviceUUID = UUID.fromString(intent.getStringExtra("serviceUUID"))
+                val characteristicUUID = UUID.fromString(intent.getStringExtra("characteristicUUID"))
 
-                if ((serviceUUID?.isNotEmpty() == true) && (characteristicUUID?.isNotEmpty() == true) && (btGatt != null))
-                {
-                    Log.i("BTService, Tx Intent", "Attempting servicescope.launch")
-                    //serviceScope = CoroutineScope(SupervisorJob())
-                    serviceScope.launch {
-                        Log.i("BTService, Tx Intent", "servicescope.launch OK")
-                        sendMutex.lock()
-                        val stringBytes = data?.toByteArray(StandardCharsets.UTF_8)
-                        if(stringBytes != null) {
-                            val charCount = stringBytes.size
-                            val swapped = ((charCount and 0xFF) shl 8) or ((charCount and 0xFF00) ushr 8)
-                            val buffer = ByteBuffer.allocate(2 + stringBytes.size)
+                commandChannel.trySend(BleWriteCommand(serviceUUID, characteristicUUID, data))
+            }
+        }
+    }
 
-                            buffer.putShort(swapped.toShort())
-                            buffer.put(stringBytes)
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @SuppressLint("MissingPermission")
+    private suspend fun executeWrite(command: BleWriteCommand)
+    {
+        val gatt = btGatt ?: return
+        Log.i("executeWrite", "Gatt OK")
+        val characteristic = gatt.getService(command.serviceUUID)?.getCharacteristic(command.characteristicUUID) ?: return
 
-                            val writeChar = btGatt!!.getService(UUID.fromString(serviceUUID))?.getCharacteristic(UUID.fromString(characteristicUUID))
-                            //find the characteristic
-                            if ((writeChar != null) && (buffer != null))
-                            {
-                                for (i in 0 until buffer.array().size step 60) {
-                                    val end = min(i + 60, buffer.array().size)
-                                    val chunk = buffer.array().copyOfRange(i, end)
-                                    callback.initMutex.lock()
-                                    Log.i("BTService, Tx Intent", "Sending packet at $i. Content: ${chunk.contentToString()}")
-                                    btGatt?.writeCharacteristic(
-                                        writeChar,
-                                        chunk,
-                                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                                    )
-                                }
-                            }
-                        }
+        val stringBytes = command.data.toByteArray(StandardCharsets.UTF_8)
+        val charCount = stringBytes.size
+        val swapped = ((charCount and 0xFF) shl 8) or ((charCount and 0xFF00) ushr 8)
+        val buffer = ByteBuffer.allocate(2 + stringBytes.size)
 
-                        sendMutex.unlock()
-                    }
+        buffer.putShort(swapped.toShort())
+        buffer.put(stringBytes)
+
+        val writeChar = btGatt!!.getService(command.serviceUUID)?.getCharacteristic(command.characteristicUUID)
+        //find the characteristic
+        if ((writeChar != null) && (buffer != null))
+        {
+            for (i in 0 until buffer.array().size step 60) {
+                val end = min(i + 60, buffer.array().size)
+                val chunk = buffer.array().copyOfRange(i, end)
+
+                Log.i("BTService, Tx Intent", "Sending packet at $i. Content: ${chunk.contentToString()}")
+                btGatt?.writeCharacteristic(
+                    writeChar,
+                    chunk,
+                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                )
+
+                waitForEvent<GattEvent.CharacteristicWritten>()
+                Log.i("BLE", "Chunk at $i sent successfully")
+            }
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private fun startCommandWorker() {
+        txJob = serviceScope.launch {
+            for (command in commandChannel) {
+                Log.i("commandChannel", "New Command")
+                val gatt = btGatt
+
+                if (gatt == null) {
+                    Log.e("BTService", "Device not connected. Ignoring command: ${command.data}")
+                    continue
+                }
+
+                try {
+                    executeWrite(command)
+                } catch (e: Exception) {
+                    Log.e("BTService", "Execution failed: ${e.message}")
                 }
             }
         }
@@ -96,72 +156,96 @@ class BTService : Service() {
 
     private val callback = object : BluetoothGattCallback()
     {
-        var initMutex = Mutex()
-        var phyMutex = Mutex()
         val MUSICCONTROL_UUID : UUID = UUID.fromString("6ddb28be-a927-11ee-a506-0242ac120002")
         val FBDEL_UUID: UUID = UUID.fromString("c533a7ba-272e-11ee-be56-0242ac120002")
 
-        override fun onPhyUpdate(gatt: BluetoothGatt?, txPhy: Int, rxPhy: Int, status: Int) {
-            super.onPhyUpdate(gatt, txPhy, rxPhy, status)
-            phyMutex.unlock()
+        @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int)
+        {
+            if (newState == BluetoothProfile.STATE_CONNECTED)
+            {
+                gattEventChannel = Channel<GattEvent>(Channel.UNLIMITED)
+                commandChannel = Channel<BleWriteCommand>(Channel.BUFFERED)
+                startSetup(gatt)
+            }
+
+            else if (newState == BluetoothProfile.STATE_DISCONNECTED)
+            {
+                Log.e("onConnectionStateChange", "Disconnected with status $status")
+                setupJob?.cancel() //kill setup on connection fail.
+                txJob?.cancel()
+                gattEventChannel.trySend(GattEvent.Disconnected(status))
+                btGatt = null
+            }
+        }
+
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int)
+        {
+            gattEventChannel.trySend(GattEvent.MtuChanged)
+        }
+
+        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int)
+        {
+            gattEventChannel.trySend(GattEvent.ServicesDiscovered)
+        }
+
+        override fun onCharacteristicWrite(gatt: BluetoothGatt, char: BluetoothGattCharacteristic, status: Int)
+        {
+            gattEventChannel.trySend(GattEvent.CharacteristicWritten)
+        }
+
+        override fun onDescriptorWrite(gatt: BluetoothGatt, desc: BluetoothGattDescriptor, status: Int)
+        {
+            gattEventChannel.trySend(GattEvent.DescriptorWritten)
+        }
+
+        override fun onPhyUpdate(gatt: BluetoothGatt?, txPhy: Int, rxPhy: Int, status: Int)
+        {
+            gattEventChannel.trySend(GattEvent.PhyUpdated)
         }
 
         @RequiresApi(Build.VERSION_CODES.TIRAMISU)
         @SuppressLint("MissingPermission")
-        override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int)
+        private fun startSetup(gatt: BluetoothGatt)
         {
-            super.onConnectionStateChange(gatt, status, newState)
-            if(newState == BluetoothProfile.STATE_CONNECTED && gatt != null)
-            {
-                //start post connect setup.
-                Log.i("BTGattCallback, onConnectionStateChange", "Watch connected")
-                if(initMutex.isLocked)
+            btGatt = gatt
+            if(btGatt == null) return;
+            setupJob?.cancel()
+            setupJob = serviceScope.launch{
+                try
                 {
-                    initMutex.unlock()
-                }
+                    waitForEvent<GattEvent.PhyUpdated>()
 
-                btGatt = gatt
+                    Log.i("setupJob", "Requesting MTU...")
+                    btGatt!!.requestMtu(64)
+                    waitForEvent<GattEvent.MtuChanged>()
 
-                serviceScope = CoroutineScope(SupervisorJob())
-                serviceScope.launch{
-                    initMutex.lock()
-                    phyMutex.lock()
-                    while(phyMutex.isLocked){yield()}
-
-                    gatt.requestMtu(64)
-                    initMutex.lock()
-                    gatt.discoverServices()
-                    while(initMutex.isLocked){yield()}
-
-                    Log.i("BTGattCallback, onConnectionStateChange", "Base setup complete. Doing service discovery...")
+                    Log.i("setupJob", "Discovering Services...")
+                    btGatt!!.discoverServices()
+                    waitForEvent<GattEvent.ServicesDiscovered>()
 
                     val timeService : UUID = UUID.fromString("1f55d926-12bb-11ee-be56-0242ac120007")
-                    val timeCharacteristic = gatt.getService(timeService)?.getCharacteristic(TIME_UUID)
+                    val timeCharacteristic = btGatt!!.getService(timeService)?.getCharacteristic(TIME_UUID)
                     val notificationServiceUUID : UUID = UUID.fromString("d2fa52f9-4c5d-4a05-a010-c26a1b99f5e6")
-                    val notificationService = gatt.getService(notificationServiceUUID)
+                    val notificationService = btGatt!!.getService(notificationServiceUUID)
                     val musicServiceUUID : UUID = UUID.fromString("019c9698-ccae-7bd0-9976-3017ee420aba")
-                    val musicControlCharacteristic = gatt.getService(musicServiceUUID)?.getCharacteristic(MUSICCONTROL_UUID)
-
-                    //notBufC = gattService?.getCharacteristic(NOTBUF_UUID)
-                    //notDelBufC = gattService?.getCharacteristic(NOTDELBUF_UUID)
-                    //fbDel = gattService?.getCharacteristic(FBDEL_UUID)
-                    //deetsCharacteristic = gattService?.getCharacteristic(MUSICDEETS_UUID)
-
+                    val musicControlCharacteristic = btGatt!!.getService(musicServiceUUID)?.getCharacteristic(MUSICCONTROL_UUID)
+                    //sleep to ensure population
+                    Thread.sleep(100)
                     if (timeCharacteristic != null)
                     {
-                        Log.i("BTGattCallback, onConnectionStateChange", "Found time service, writing time")
+                        Log.i("startSetup", "Found time service, writing time")
                         var unixTime = (Calendar.getInstance().timeInMillis/1000)
                         val tz = TimeZone.getDefault() as TimeZone
                         unixTime += (tz.getOffset(Calendar.getInstance().timeInMillis)/1000)
 
                         val utString = unixTime.toString()
-                        initMutex.lock()
                         val x: ByteBuffer = ByteBuffer.allocate(Long.SIZE_BYTES)
                         x.putLong(unixTime)
 
-                        gatt.writeCharacteristic(timeCharacteristic,  x.array().reversedArray(), BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
-                        while(initMutex.isLocked){yield()}
-                        Log.i("BTGattCallback, onConnectionStateChange", "Time set $utString " + unixTime + " " + tz.getOffset(unixTime)/1000)
+                        btGatt!!.writeCharacteristic(timeCharacteristic,  x.array().reversedArray(), BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                        waitForEvent<GattEvent.CharacteristicWritten>()
+                        Log.i("startSetup", "Time set $utString " + unixTime + " " + tz.getOffset(unixTime)/1000)
                     }
 
                     //also set up music controls and notDels callback notify flags
@@ -171,10 +255,9 @@ class BTService : Service() {
                         val CHARACTERISTIC_UPDATE_NOTIFICATION_DESCRIPTOR_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
                         val descriptor: BluetoothGattDescriptor = musicControlCharacteristic.getDescriptor(CHARACTERISTIC_UPDATE_NOTIFICATION_DESCRIPTOR_UUID)
 
-                        initMutex.lock()
                         btGatt?.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-                        while(initMutex.isLocked){yield()}
-                        Log.i("BTGattCallback, onConnectionStateChange", "Notify properties set for music control uuid")
+                        waitForEvent<GattEvent.DescriptorWritten>()
+                        Log.i("startSetup", "Notify properties set for music control uuid")
                     }
 
                     val notDelCharacteristic = notificationService?.getCharacteristic(FBDEL_UUID)
@@ -184,61 +267,20 @@ class BTService : Service() {
                         val CHARACTERISTIC_UPDATE_NOTIFICATION_DESCRIPTOR_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
                         val descriptor: BluetoothGattDescriptor = notDelCharacteristic.getDescriptor(CHARACTERISTIC_UPDATE_NOTIFICATION_DESCRIPTOR_UUID)
 
-                        initMutex.lock()
                         btGatt?.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-                        while(initMutex.isLocked){yield()}
-                        Log.i("BTGattCallback, onConnectionStateChange", "Notify properties set for notification deletion uuid")
+                        waitForEvent<GattEvent.DescriptorWritten>()
+                        Log.i("startSetup", "Notify properties set for notification deletion uuid")
                     }
-                }
-            }
 
-            else
-            {
-                Log.i("BTGattCallback, onConnectionStateChange", "Watch disconnected")
-                serviceScope.cancel()
-                btGatt = null
-                if(initMutex.isLocked)
+                    Thread.sleep(100)
+                    startCommandWorker()
+                }
+
+                catch (e: Exception)
                 {
-                    initMutex.unlock()
+                    Log.e("BLE", "Setup aborted: ${e.message}")
                 }
             }
-        }
-
-        @SuppressLint("MissingPermission")
-        override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int)
-        {
-            super.onMtuChanged(gatt, mtu, status)
-            Log.i("BTGattCallback, onMtuChanged", "MTU changed")
-            initMutex.unlock()
-        }
-
-        @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-        @SuppressLint("MissingPermission")
-        override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int)
-        {
-            super.onServicesDiscovered(gatt, status)
-            Log.i("BTGattCallback, onServicesDiscovered", "Services discovered")
-            initMutex.unlock()
-        }
-
-        override fun onDescriptorWrite(
-            gatt: BluetoothGatt?,
-            descriptor: BluetoothGattDescriptor?,
-            status: Int
-        ) {
-            super.onDescriptorWrite(gatt, descriptor, status)
-            Log.i("BTGattCallback, onDescriptorWrite", "Descriptor written")
-            initMutex.unlock()
-        }
-
-        override fun onCharacteristicWrite(
-            gatt: BluetoothGatt?,
-            characteristic: BluetoothGattCharacteristic?,
-            status: Int
-        ) {
-            super.onCharacteristicWrite(gatt, characteristic, status)
-            Log.i("BTGattCallback, onCharacteristicWrite", "CW Done")
-            initMutex.unlock()
         }
 
         var delStr = ByteArrayOutputStream()
@@ -354,6 +396,8 @@ class BTService : Service() {
                 RECEIVER_EXPORTED
             )
         }
+
+        //startCommandWorker()
     }
 
     @SuppressLint("MissingPermission")
