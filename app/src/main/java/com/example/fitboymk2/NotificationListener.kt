@@ -1,9 +1,7 @@
 package com.example.fitboymk2
 
-import android.R
 import android.annotation.SuppressLint
 import android.app.Notification
-import android.bluetooth.BluetoothGattCharacteristic
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -22,8 +20,8 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.launch
 import java.util.UUID
+import kotlin.let
 import kotlin.math.ceil
 class NotificationListener : NotificationListenerService()
 {
@@ -68,6 +66,47 @@ class NotificationListener : NotificationListenerService()
         }
     }
 
+    class LongIdManager
+    {
+        private val longToId = mutableMapOf<Long, Int>()
+        private val idToLong = mutableMapOf<Int, Long>()
+        private val availableIds = ArrayDeque<Int>((1..255).toList())
+
+        fun getId(input: Long): Int?
+        {
+            longToId[input]?.let { return it }
+
+            //if new we create
+            val nextId = availableIds.removeFirstOrNull() ?: return null
+
+            longToId[input] = nextId
+            idToLong[nextId] = input
+            return nextId
+        }
+
+        fun releaseLong(input: Long): Int?
+        {
+            val id = longToId.remove(input)
+            if (id != null)
+            {
+                idToLong.remove(id)
+                availableIds.add(id)
+            }
+            return(id)
+        }
+
+        fun releaseID(input: Int): Long?
+        {
+            val l = idToLong.remove(input)
+            if(l != null)
+            {
+                longToId.remove(l)
+                availableIds.add(input)
+            }
+            return(l)
+        }
+    }
+
     var stringIdManager = StringIdManager();
     private var mediaManager : MediaSessionManager? = null
 
@@ -95,8 +134,8 @@ class NotificationListener : NotificationListenerService()
         val MUSICDEETS_UUID: UUID = UUID.fromString("5df4d2b0-a927-11ee-a506-0242ac120002")
         var activeController: MediaController? = null
         //var nlContext : Context? = null
-        var lastSent = ""
-        var lastSentTime = System.currentTimeMillis()
+        var lastSendMD = ""
+        var lastSentTimeMD = System.currentTimeMillis()
         fun sendDeets(mc: MediaController?)
         {
             var album = ""
@@ -145,11 +184,11 @@ class NotificationListener : NotificationListenerService()
             val toSend = if(trackName.isEmpty()) {
                 "KILL"
             } else {
-                "<AD>$trackName<1>$artist<2>$album<3>$trackLength<4>$cPos<5>$play"
+                "$trackName\u0000$artist\u0000$album\u0000$trackLength\u0000$cPos\u0000$play\u0000"
             }
 
             //Log.i("MDCB", "Attempted $toSend  $lastSent")
-            if((toSend != lastSent) || ((System.currentTimeMillis() - lastSentTime) > 200L))
+            if((toSend != lastSendMD) || ((System.currentTimeMillis() - lastSentTimeMD) > 200L))
             {
                 Log.i("metadataCallback, sendDeets", "Data to send: $toSend")
                 val MUSIC_SERVICE_UUID_VAL = UUID.fromString("019c9698-ccae-7bd0-9976-3017ee420aba")
@@ -160,24 +199,164 @@ class NotificationListener : NotificationListenerService()
                 }
 
                 this@NotificationListener.sendBroadcast(intent)
-                lastSent = toSend
-                lastSentTime = System.currentTimeMillis()
+                lastSendMD = toSend
+                lastSentTimeMD = System.currentTimeMillis()
+            }
+
+            if(activeController?.playbackState?.activeQueueItemId != lastSongID)
+            {
+                Log.i("sendDeets", "Old: $lastSongID, New: ${activeController?.playbackState?.activeQueueItemId}")
+                val currentQueue = activeController?.queue
+                if(currentQueue != null)
+                    sendWatchPlaylist(currentQueue)
+            }
+        }
+
+        var lastQueue : List<MediaSession.QueueItem?>? = null
+        var lastSongID : Long? = null
+        fun sendWatchPlaylist(queue: List<MediaSession.QueueItem?>)
+        {
+            val activeId = activeController?.playbackState?.activeQueueItemId
+            lastSongID = activeId
+            var queueFinal: List<MediaSession.QueueItem?>? = null
+            queue.size.let {
+                if(it > 50) {
+                    val currentIndex = queue.indexOfFirst { it?.queueId == activeId }.takeIf { it != -1 } ?: 0
+
+                    val maxTotal = 50
+                    val targetBefore = 12
+                    val targetAfter = maxTotal - targetBefore - 1
+
+                    val actualAvailableBefore = currentIndex
+                    val actualAvailableAfter = queue.size - currentIndex - 1
+
+                    val beforeCount = minOf(targetBefore, actualAvailableBefore)
+                    val afterCountNeeded = targetAfter + (targetBefore - beforeCount)
+                    val afterCount = minOf(afterCountNeeded, actualAvailableAfter)
+
+                    val finalBeforeCount = minOf(actualAvailableBefore, beforeCount + (afterCountNeeded - afterCount))
+
+                    val start = (currentIndex - finalBeforeCount).coerceAtLeast(0)
+                    val end = (currentIndex + afterCount).coerceAtMost(queue.size - 1)
+
+                    queueFinal = queue.slice(start..end)
+                } else {
+                    queueFinal = queue
+                }
+            }
+
+            val fixedQueue = queueFinal
+            if (fixedQueue != null && fixedQueue.isNotEmpty())
+            {
+                //look for long subsequences. first do a ff pass, then a backward pass.
+                val lastQueueSize = lastQueue?.size ?: 0
+                var validFF = false
+                var validRW = false
+                var seekFwdVal = 0
+                var seekBackVal = 0
+                var idxFF = 0
+
+                lastQueue?.let {
+                    for(i in it.indices) {
+                        //go forward until we find the first of this new queue. then verify to see if a ff will cover it.
+                        if((lastQueue!![i]?.description?.title == fixedQueue[0]?.description?.title)
+                            && (lastQueue!![i]?.description?.subtitle == fixedQueue[0]?.description?.subtitle)) {
+
+                            seekFwdVal = i
+                            validFF = true
+
+                            for(j in i until lastQueueSize)
+                            {
+                                if(fixedQueue[idxFF]?.description == null)
+                                {
+                                    continue
+                                }
+
+                                if((lastQueue!![j]?.description?.title == fixedQueue[idxFF]?.description?.title)
+                                    && (lastQueue!![j]?.description?.subtitle == fixedQueue[idxFF]?.description?.subtitle))
+                                {
+                                    idxFF++
+                                }
+
+                                else
+                                {
+                                    validFF = false
+                                    break
+                                }
+                            }
+
+                            break
+                        }
+                    }
+                }
+
+                //also try for a seekback
+                var idxRW = 0
+                if(lastQueue != null) {
+                    for (i in fixedQueue.indices) {
+                        //go forward until we find the first of this new queue. then verify to see if a ff will cover it.
+                        if ((lastQueue!![0]?.description?.title == fixedQueue[i]?.description?.title)
+                            && (lastQueue!![0]?.description?.subtitle == fixedQueue[i]?.description?.subtitle)
+                        ) {
+
+                            seekBackVal = i
+                            validRW = true
+
+                            for (j in i until fixedQueue.size) {
+                                if (lastQueue!![idxRW]?.description == null) {
+                                    continue
+                                }
+
+                                if ((lastQueue!![idxRW]?.description?.title == fixedQueue[j]?.description?.title)
+                                    && (lastQueue!![idxRW]?.description?.subtitle == fixedQueue[j]?.description?.subtitle)
+                                ) {
+                                    idxRW++
+                                } else {
+                                    validRW = false
+                                    break
+                                }
+                            }
+
+                            break
+                        }
+                    }
+                }
+                //fixedQueue is the return item
+                Log.i("sendWatchPlaylist", "${fixedQueue.size} items in arranged list")
+                for (i in fixedQueue)
+                {
+                    Log.i("sendWatchPlaylist", "Item: ${i.toString()}")
+                }
+
+                if(validFF)
+                {
+                    Log.i("sendWatchPlaylist", "Can optimize by seeking to $seekFwdVal and appending...")
+
+                    for(k in idxFF until fixedQueue.size)
+                    {
+                        Log.i("sendWatchPlaylist", "APPEND ITEM: ${fixedQueue[k].toString()}")
+                    }
+                }
+
+                if(validRW)
+                {
+                    Log.i("sendWatchPlaylist", "Can optimize by seeking back by $seekBackVal and adding to top...")
+
+                    for(k in 0 until seekBackVal)
+                    {
+                        Log.i("sendWatchPlaylist", "TO TOP: ${fixedQueue[k].toString()}")
+                    }
+                }
+
+                lastQueue = fixedQueue
             }
         }
 
         override fun onQueueChanged(queue: List<MediaSession.QueueItem?>?)
         {
             Log.i("metadataCallback, onQueueChange", "callback triggered")
-            if (queue != null)
-            {
-                Log.i("metadataCallback, onQueueChange", "${queue.size} items")
-                for (i in queue)
-                {
-                    Log.i("metadataCallback, onQueueChange", "Item: ${i.toString()}")
-                    //Log.i("Title", (i?.description?.title ?: "") as String)
-                    //Log.i("subtitle", (i?.description?.subtitle ?: "") as String)
-                }
-            }
+            Log.i("metadataCallback, onQueueChange", "Current song ID: ${activeController?.playbackState?.activeQueueItemId}")
+
             super.onQueueChanged(queue)
         }
 
