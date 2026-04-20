@@ -176,6 +176,9 @@ class BTService : Service()
                 txJob?.cancel()
                 gattEventChannel.trySend(GattEvent.Disconnected(status))
                 btGatt = null
+                val intent = Intent("com.fitboymk2.WATCH_DISCONNECTED").apply {}
+
+                this@BTService.sendBroadcast(intent)
             }
         }
 
@@ -274,6 +277,9 @@ class BTService : Service()
 
                     Thread.sleep(100)
                     startCommandWorker()
+                    val intent = Intent("com.fitboymk2.WATCH_CONNECTED").apply {}
+
+                    this@BTService.sendBroadcast(intent)
                 }
 
                 catch (e: Exception)
