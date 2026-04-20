@@ -125,6 +125,20 @@ class NotificationListener : NotificationListenerService()
                     this@NotificationListener.cancelNotification(notificationId)
                 }
             }
+
+            else if(intent?.action == "com.fitboymk2.WATCH_DISCONNECTED")
+            {
+                Log.i("NotificationListener", "DC Intetn")
+                metadataCallback.lastQueue = null
+                metadataCallback.updateLastVals = false
+            }
+
+            else if(intent?.action == "com.fitboymk2.WATCH_CONNECTED")
+            {
+                Log.i("NotificationListener", "Connected Intetn")
+                metadataCallback.lastQueue = null
+                metadataCallback.updateLastVals = true
+            }
         }
     }
 
@@ -132,10 +146,13 @@ class NotificationListener : NotificationListenerService()
     private val metadataCallback = object : MediaController.Callback()
     {
         val MUSICDEETS_UUID: UUID = UUID.fromString("5df4d2b0-a927-11ee-a506-0242ac120002")
+        val MUSICQUEUE_UUID: UUID = UUID.fromString("019d3745-7fec-7a03-8ab8-4b91c344b29b")
         var activeController: MediaController? = null
         //var nlContext : Context? = null
         var lastSendMD = ""
         var lastSentTimeMD = System.currentTimeMillis()
+        var updateLastVals: Boolean = false
+
         fun sendDeets(mc: MediaController?)
         {
             var album = ""
@@ -323,6 +340,7 @@ class NotificationListener : NotificationListenerService()
                 }
                 //fixedQueue is the return item
                 Log.i("sendWatchPlaylist", "${fixedQueue.size} items in arranged list")
+                var toSend : String? = null
                 for (i in fixedQueue)
                 {
                     Log.i("sendWatchPlaylist", "Item: ${i.toString()}")
@@ -330,25 +348,73 @@ class NotificationListener : NotificationListenerService()
 
                 if(validFF)
                 {
-                    Log.i("sendWatchPlaylist", "Can optimize by seeking to $seekFwdVal and appending...")
+                    if(seekFwdVal > 0) {
+                        val fwdByte: Char = seekFwdVal.toChar()
+                        toSend = "$fwdByte"
+                        Log.i(
+                            "sendWatchPlaylist",
+                            "Can optimize by seeking to $seekFwdVal and appending..."
+                        )
 
-                    for(k in idxFF until fixedQueue.size)
-                    {
-                        Log.i("sendWatchPlaylist", "APPEND ITEM: ${fixedQueue[k].toString()}")
+                        for (k in idxFF until fixedQueue.size) {
+                            val title = fixedQueue[k]?.description?.title ?: " "
+                            val subtitle = fixedQueue[k]?.description?.subtitle ?: " "
+                            toSend += "$title\u0000$subtitle\u0000"
+                            Log.i("sendWatchPlaylist", "APPEND ITEM: ${fixedQueue[k].toString()}")
+                        }
                     }
                 }
 
-                if(validRW)
+                else if(validRW)
                 {
+                    val bkByte: Char = (-1 * seekBackVal).toChar()
+                    Char.MIN_VALUE
+                    toSend = "$bkByte"
                     Log.i("sendWatchPlaylist", "Can optimize by seeking back by $seekBackVal and adding to top...")
 
                     for(k in 0 until seekBackVal)
                     {
+                        val title =  fixedQueue[k]?.description?.title ?: " "
+                        val subtitle = fixedQueue[k]?.description?.subtitle ?: " "
+                        toSend += "$title\u0000$subtitle\u0000"
                         Log.i("sendWatchPlaylist", "TO TOP: ${fixedQueue[k].toString()}")
                     }
                 }
 
-                lastQueue = fixedQueue
+                else
+                {
+                    Log.i("sendWatchPlaylist", "No optimization possible.")
+                    toSend = "\u0000"
+                    for (i in fixedQueue)
+                    {
+                        val title =  i?.description?.title ?: " "
+                        val subtitle = i?.description?.subtitle ?: " "
+                        toSend += "$title\u0000$subtitle\u0000"
+                    }
+                }
+
+                if(updateLastVals)
+                {
+                    Log.i("sendWatchPlaylist", "Connected, so updating lastQueue")
+                    lastQueue = fixedQueue
+
+                    if(toSend != null) {
+                        val MUSIC_SERVICE_UUID_VAL =
+                            UUID.fromString("019c9698-ccae-7bd0-9976-3017ee420aba")
+                        val intent = Intent("com.fitboymk2.SEND_BLE_COMMAND").apply {
+                            putExtra("TOSEND", toSend)
+                            putExtra("serviceUUID", MUSIC_SERVICE_UUID_VAL.toString())
+                            putExtra("characteristicUUID", MUSICQUEUE_UUID.toString())
+                        }
+
+                        this@NotificationListener.sendBroadcast(intent)
+                    }
+                }
+
+                else
+                {
+                    Log.i("sendWatchPlaylist", "Disconnected lmao")
+                }
             }
         }
 
@@ -447,7 +513,12 @@ class NotificationListener : NotificationListenerService()
 
         try
         {
-            registerReceiver(receiver, IntentFilter("com.fitboymk2.DELETENOTIFICATION"),
+            val intentFilter = IntentFilter().apply {
+                addAction("com.fitboymk2.DELETENOTIFICATION")
+                addAction("com.fitboymk2.WATCH_CONNECTED")
+                addAction("com.fitboymk2.WATCH_DISCONNECTED")
+            }
+            registerReceiver(receiver, intentFilter,
                 RECEIVER_EXPORTED
             )
         }
@@ -455,7 +526,12 @@ class NotificationListener : NotificationListenerService()
         catch (_:Exception)
         {
             unregisterReceiver(receiver)
-            registerReceiver(receiver, IntentFilter("com.fitboymk2.DELETENOTIFICATION"),
+            val intentFilter = IntentFilter().apply {
+                addAction("com.fitboymk2.DELETENOTIFICATION")
+                addAction("com.fitboymk2.WATCH_CONNECTED")
+                addAction("com.fitboymk2.WATCH_DISCONNECTED")
+            }
+            registerReceiver(receiver, intentFilter,
                 RECEIVER_EXPORTED
             )
         }
