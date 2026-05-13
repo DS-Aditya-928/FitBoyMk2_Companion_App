@@ -308,10 +308,11 @@ class BTService : Service()
                 if(value.last().toInt() == 0)
                 {
                     val aM = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                    val v = String(conStr.toByteArray().dropLast(1).toByteArray())
+                    val byteStream = conStr.toByteArray()
+                    //val v = String(conStr.toByteArray().dropLast(1).toByteArray())
                     conStr.reset()
-                    Log.i("Music Control, BTGattCallback, onCharacteristicChange", "Final String: $v")
-                    if(v.compareTo("1") == 0)
+                    Log.i("Music Control, BTGattCallback, onCharacteristicChange", "Final String: ${byteStream.toString()}, ${byteStream[0]}, ${"1".toByte()}")
+                    if(byteStream[0] == "1".toByteArray()[0])
                     {
                         val eventTime = android.os.SystemClock.uptimeMillis()
 
@@ -324,29 +325,29 @@ class BTService : Service()
                         aM.dispatchMediaKeyEvent(upEvent)
                     }
 
-                    else if(v.compareTo("2") == 0)
+                    else if(byteStream[0] == "2".toByteArray()[0])
                     {
-                        val eventtime = android.os.SystemClock.uptimeMillis()
+                        val eventTime = android.os.SystemClock.uptimeMillis()
 
                         val downEvent =
-                            KeyEvent(eventtime, eventtime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_NEXT, 0)
+                            KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_NEXT, 0)
                         aM.dispatchMediaKeyEvent(downEvent)
 
                         val upEvent =
-                            KeyEvent(eventtime, eventtime, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_NEXT, 0)
+                            KeyEvent(eventTime, eventTime, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_NEXT, 0)
                         aM.dispatchMediaKeyEvent(upEvent)
                     }
 
-                    else if(v.compareTo("3") == 0)
+                    else if(byteStream[0] == "3".toByteArray()[0])
                     {
-                        val eventtime = android.os.SystemClock.uptimeMillis()
+                        val eventTime = android.os.SystemClock.uptimeMillis()
 
                         val downEvent =
-                            KeyEvent(eventtime, eventtime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PREVIOUS, 0)
+                            KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PREVIOUS, 0)
                         aM.dispatchMediaKeyEvent(downEvent)
 
                         val upEvent =
-                            KeyEvent(eventtime, eventtime, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PREVIOUS, 0)
+                            KeyEvent(eventTime, eventTime, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PREVIOUS, 0)
                         aM.dispatchMediaKeyEvent(upEvent)
                     }
                 }

@@ -128,16 +128,27 @@ class NotificationListener : NotificationListenerService()
 
             else if(intent?.action == "com.fitboymk2.WATCH_DISCONNECTED")
             {
-                Log.i("NotificationListener", "DC Intetn")
+                Log.i("NotificationListener", "DC Intent")
                 metadataCallback.lastQueue = null
                 metadataCallback.updateLastVals = false
             }
 
             else if(intent?.action == "com.fitboymk2.WATCH_CONNECTED")
             {
-                Log.i("NotificationListener", "Connected Intetn")
+                Log.i("NotificationListener", "Connected Intent")
                 metadataCallback.lastQueue = null
                 metadataCallback.updateLastVals = true
+            }
+
+            else if(intent?.action == "com.fitboymk2.MUSIC_CONTROL")
+            {
+                Log.i("NotificationListener", "Music Control")
+                val skipID: Int = intent.getIntExtra("TrackID", -1)
+
+                if(skipID > -1)
+                {
+                    Log.i("NotificationListener", "Skip to: ${metadataCallback.lastQueue?.get(skipID).toString()}")
+                }
             }
         }
     }
@@ -346,14 +357,25 @@ class NotificationListener : NotificationListenerService()
                     Log.i("sendWatchPlaylist", "Item: ${i.toString()}")
                 }
 
+                var curIndexInFQ = 0
+                for (i in fixedQueue.indices)
+                {
+                    if(fixedQueue[i]?.queueId == activeId)
+                    {
+                        curIndexInFQ = i
+                    }
+                }
+                val posByte: Char = curIndexInFQ.toChar()
+
                 if(validFF)
                 {
                     if(seekFwdVal > 0) {
-                        val fwdByte: Char = seekFwdVal.toChar()
-                        toSend = "$fwdByte"
+                        val fwdByte: Char = (seekFwdVal + 64).toChar()
+
+                        toSend = "$fwdByte$posByte"
                         Log.i(
                             "sendWatchPlaylist",
-                            "Can optimize by seeking to $seekFwdVal and appending..."
+                            "Can optimize by seeking to $seekFwdVal (byte val:${(128 + seekFwdVal)}) and appending..."
                         )
 
                         for (k in idxFF until fixedQueue.size) {
@@ -367,10 +389,9 @@ class NotificationListener : NotificationListenerService()
 
                 else if(validRW)
                 {
-                    val bkByte: Char = (-1 * seekBackVal).toChar()
-                    Char.MIN_VALUE
-                    toSend = "$bkByte"
-                    Log.i("sendWatchPlaylist", "Can optimize by seeking back by $seekBackVal and adding to top...")
+                    val bkByte: Char = (64-seekBackVal).toChar()
+                    toSend = "$bkByte$posByte"
+                    Log.i("sendWatchPlaylist", "Can optimize by seeking back by $seekBackVal (byte val:${(128 - seekBackVal)} and adding to top...")
 
                     for(k in 0 until seekBackVal)
                     {
@@ -384,7 +405,7 @@ class NotificationListener : NotificationListenerService()
                 else
                 {
                     Log.i("sendWatchPlaylist", "No optimization possible.")
-                    toSend = "\u0000"
+                    toSend = "\u0040$posByte"
                     for (i in fixedQueue)
                     {
                         val title =  i?.description?.title ?: " "
@@ -424,21 +445,22 @@ class NotificationListener : NotificationListenerService()
             Log.i("metadataCallback, onQueueChange", "Current song ID: ${activeController?.playbackState?.activeQueueItemId}")
 
             super.onQueueChanged(queue)
+            if(queue != null)
+                sendWatchPlaylist(queue)
         }
 
         override fun onPlaybackStateChanged(state: PlaybackState?)
         {
+            super.onPlaybackStateChanged(state)
             sendDeets(activeController)
             //Log.i("PS", state.toString())
-            super.onPlaybackStateChanged(state)
         }
 
         @SuppressLint("MissingPermission", "WrongConstant")
         override fun onMetadataChanged(metadata: MediaMetadata?)
         {
-            sendDeets(activeController)
-
             super.onMetadataChanged(metadata)
+            sendDeets(activeController)
         }
 
         @SuppressLint("MissingPermission")
@@ -517,6 +539,7 @@ class NotificationListener : NotificationListenerService()
                 addAction("com.fitboymk2.DELETENOTIFICATION")
                 addAction("com.fitboymk2.WATCH_CONNECTED")
                 addAction("com.fitboymk2.WATCH_DISCONNECTED")
+                addAction("com.fitboymk2.MUSIC_CONTROL")
             }
             registerReceiver(receiver, intentFilter,
                 RECEIVER_EXPORTED
@@ -530,6 +553,7 @@ class NotificationListener : NotificationListenerService()
                 addAction("com.fitboymk2.DELETENOTIFICATION")
                 addAction("com.fitboymk2.WATCH_CONNECTED")
                 addAction("com.fitboymk2.WATCH_DISCONNECTED")
+                addAction("com.fitboymk2.MUSIC_CONTROL")
             }
             registerReceiver(receiver, intentFilter,
                 RECEIVER_EXPORTED
